@@ -1,5 +1,8 @@
 package org.pe.nextcar.iam.infrastructure.authorization.sfs.configuration;
 
+import org.pe.nextcar.iam.infrastructure.authorization.sfs.pipeline.BearerAuthorizationRequestFilter;
+import org.pe.nextcar.iam.infrastructure.hashing.bcrypt.BCryptHashingService;
+import org.pe.nextcar.iam.infrastructure.tokens.jwt.BearerTokenService;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,9 +19,6 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
-import org.pe.nextcar.iam.infrastructure.authorization.sfs.pipeline.BearerAuthorizationRequestFilter;
-import org.pe.nextcar.iam.infrastructure.hashing.bcrypt.BCryptHashingService;
-import org.pe.nextcar.iam.infrastructure.tokens.jwt.BearerTokenService;
 
 import java.util.List;
 
@@ -57,11 +57,15 @@ public class WebSecurityConfiguration {
   }
 
   /** Authentication provider. */
+  /** esto jode  con las versiones podemos cambiarlo dependiendo si da error. */
   @Bean
   public DaoAuthenticationProvider authenticationProvider() {
-    var authenticationProvider = new DaoAuthenticationProvider();
-    authenticationProvider.setUserDetailsService(userDetailsService);
+    // En Spring Security 7+ el UserDetailsService va directamente en el constructor
+    var authenticationProvider = new DaoAuthenticationProvider(userDetailsService);
+
+    // El PasswordEncoder se sigue configurando a través de su método set
     authenticationProvider.setPasswordEncoder(hashingService);
+
     return authenticationProvider;
   }
 
