@@ -4,11 +4,14 @@ import org.pe.nextcar.iam.domain.model.entities.Role;
 
 import java.util.List;
 
-/** SignUpCommand value carrier. */
+
 public record SignUpCommand(
-    String email,
-    String password,
-    String firstName,
-    String lastName,
-    String phone,
-    List<Role> roles) {}
+        String email,
+        String password,
+        String firstName,
+        String lastName,
+        String phone,
+        String documentNumber,
+        String captchaToken,
+        List<Role> roles
+) {}

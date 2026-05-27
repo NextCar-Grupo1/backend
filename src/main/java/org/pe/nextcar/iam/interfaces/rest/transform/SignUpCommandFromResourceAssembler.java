@@ -8,18 +8,19 @@ import java.util.ArrayList;
 
 /** SignUpCommandFromResourceAssembler type. */
 public class SignUpCommandFromResourceAssembler {
-  /** To command from resource. */
   public static SignUpCommand toCommandFromResource(SignUpResource resource) {
     var roles =
-        resource.roles() != null
-            ? resource.roles().stream().map(Role::toRoleFromName).toList()
-            : new ArrayList<Role>();
+            resource.roles() != null
+                    ? resource.roles().stream().map(Role::toRoleFromName).toList()
+                    : new ArrayList<Role>();
     return new SignUpCommand(
-        resource.email(),
-        resource.password(),
-        resource.firstName(),
-        resource.lastName(),
-        resource.phone(),
-        roles);
+            resource.email(),
+            resource.password(),
+            resource.firstName(),
+            resource.lastName(),
+            resource.phone(),
+            resource.documentNumber(),  // nuevo
+            resource.captchaToken(),    // nuevo
+            roles);
   }
 }

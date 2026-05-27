@@ -31,35 +31,54 @@ public class IamContextFacade {
 
   /** Create user. */
   public Long createUser(
-      String email, String password, String firstName, String lastName, String phone) {
-    var defaultRole = Role.toRoleFromName("ROLE_TOURIST");
+          String email, String password, String firstName, String lastName, String phone) {
+    var defaultRole = Role.toRoleFromName("ROLE_USER");
     var signUpCommand =
-        new SignUpCommand(email, password, firstName, lastName, phone, List.of(defaultRole));
+            new SignUpCommand(
+                    email, password, firstName, lastName, phone,
+                    null,   //
+                    null,   //
+                    List.of(defaultRole));
     var result = userCommandService.handle(signUpCommand);
-    if (result.isEmpty()) {
-      return 0L;
-    }
+    if (result.isEmpty()) return 0L;
     return result.get().getId();
   }
 
-  /** Create user. */
   public Long createUser(
-      String email,
-      String password,
-      String firstName,
-      String lastName,
-      String phone,
-      List<String> roleNames) {
+          String email,
+          String password,
+          String firstName,
+          String lastName,
+          String phone,
+          String documentNumber,
+          String captchaToken,
+          List<String> roleNames) {
+
     if (roleNames == null) {
       roleNames = new ArrayList<>();
     }
-    var roles = roleNames.stream().map(Role::toRoleFromName).toList();
 
-    var signUpCommand = new SignUpCommand(email, password, firstName, lastName, phone, roles);
+    var roles = roleNames.stream()
+            .map(Role::toRoleFromName)
+            .toList();
+
+    var signUpCommand = new SignUpCommand(
+            email,
+            password,
+            firstName,
+            lastName,
+            phone,
+            documentNumber,
+            captchaToken,
+            roles
+    );
+
     var result = userCommandService.handle(signUpCommand);
+
     if (result.isEmpty()) {
       return 0L;
     }
+
     return result.get().getId();
   }
 
