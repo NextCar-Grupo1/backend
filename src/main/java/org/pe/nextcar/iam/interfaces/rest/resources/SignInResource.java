@@ -1,4 +1,9 @@
 package org.pe.nextcar.iam.interfaces.rest.resources;
 
-/** SignInResource value carrier. */
-public record SignInResource(String email, String password) {}
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+
+public record SignInResource(
+        @NotBlank @Email String email,
+        @NotBlank String password
+) {}

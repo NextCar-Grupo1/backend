@@ -9,10 +9,6 @@ import java.util.ArrayList;
 /** SignUpCommandFromResourceAssembler type. */
 public class SignUpCommandFromResourceAssembler {
   public static SignUpCommand toCommandFromResource(SignUpResource resource) {
-    var roles =
-            resource.roles() != null
-                    ? resource.roles().stream().map(Role::toRoleFromName).toList()
-                    : new ArrayList<Role>();
     return new SignUpCommand(
             resource.email(),
             resource.password(),
@@ -20,7 +16,6 @@ public class SignUpCommandFromResourceAssembler {
             resource.lastName(),
             resource.phone(),
             resource.documentNumber(),  // nuevo
-            resource.captchaToken(),    // nuevo
-            roles);
+            resource.captchaToken());
   }
 }

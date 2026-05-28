@@ -40,10 +40,9 @@ public class BearerAuthorizationRequestFilter extends OncePerRequestFilter {
       throws ServletException, IOException {
     try {
       String token = tokenService.getBearerTokenFrom(request);
-      LOGGER.info("Token: {}", token);
       if (token != null && tokenService.validateToken(token)) {
         String email = tokenService.getEmailFromToken(token);
-        LOGGER.info("Email extracted from token: {}", email);
+        LOGGER.debug("Authenticated user: {}", email);
         var userDetails = userDetailsService.loadUserByUsername(email);
         SecurityContextHolder.getContext()
             .setAuthentication(

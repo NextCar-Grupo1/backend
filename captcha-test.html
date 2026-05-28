@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>reCAPTCHA Test</title>
+</head>
+<body>
+  <h2>Obtener token reCAPTCHA</h2>
+  <button id="testBtn" style="padding:10px 20px;">Obtener token</button>
+  <br><br>
+  <textarea id="tokenDisplay" rows="5" cols="70" placeholder="El token aparecerá aquí..."></textarea>
+  <br>
+  <button id="copyBtn" style="padding:5px 10px;">Copiar al portapapeles</button>
+
+  <script src="https://www.google.com/recaptcha/api.js?render=6LfhUf4sAAAAAEPikPEf23FDcXjvz_ld515xnAaU"></script>
+  <script>
+    document.getElementById('testBtn').onclick = function() {
+      grecaptcha.ready(function() {
+        grecaptcha.execute('6LfhUf4sAAAAAEPikPEf23FDcXjvz_ld515xnAaU', {action: 'signup'}).then(function(token) {
+          document.getElementById('tokenDisplay').value = token;
+        });
+      });
+    };
+    document.getElementById('copyBtn').onclick = function() {
+      var ta = document.getElementById('tokenDisplay');
+      ta.select();
+      navigator.clipboard.writeText(ta.value);
+    };
+  </script>
+</body>
+</html>

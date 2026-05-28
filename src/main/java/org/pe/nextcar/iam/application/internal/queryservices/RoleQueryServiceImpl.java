@@ -1,5 +1,6 @@
 package org.pe.nextcar.iam.application.internal.queryservices;
 
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
 import org.pe.nextcar.iam.domain.model.entities.Role;
 import org.pe.nextcar.iam.domain.model.queries.GetAllRolesQuery;
@@ -12,6 +13,7 @@ import java.util.Optional;
 
 /** RoleQueryServiceImpl type. */
 @Service
+@Transactional(readOnly = true)
 public class RoleQueryServiceImpl implements RoleQueryService {
   private final RoleRepository roleRepository;
 

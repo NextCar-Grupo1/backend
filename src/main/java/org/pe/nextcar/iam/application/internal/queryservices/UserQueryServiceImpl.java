@@ -1,5 +1,6 @@
 package org.pe.nextcar.iam.application.internal.queryservices;
 
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
 import org.pe.nextcar.iam.domain.model.aggregates.User;
 import org.pe.nextcar.iam.domain.model.queries.GetAllUsersQuery;
@@ -13,6 +14,7 @@ import java.util.Optional;
 
 /** UserQueryServiceImpl type. */
 @Service
+@Transactional(readOnly = true)
 public class UserQueryServiceImpl implements UserQueryService {
   private final UserRepository userRepository;
 

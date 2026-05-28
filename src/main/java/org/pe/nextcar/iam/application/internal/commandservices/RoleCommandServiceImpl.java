@@ -25,7 +25,7 @@ public class RoleCommandServiceImpl implements RoleCommandService {
         .forEach(
             role -> {
               if (!roleRepository.existsByName(role)) {
-                roleRepository.save(new Role(Roles.valueOf(role.name())));
+                roleRepository.save(new Role(role));
               }
             });
   }

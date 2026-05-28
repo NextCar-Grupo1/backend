@@ -1,6 +1,6 @@
 package org.pe.nextcar.iam.domain.model.aggregates;
 
-import  jakarta.persistence.*;
+import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
@@ -11,7 +11,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/** User type. */
 @Entity
 public class User extends AuditableAbstractAggregateRoot<User> {
 
@@ -45,7 +44,7 @@ public class User extends AuditableAbstractAggregateRoot<User> {
   @Getter private boolean emailVerified;
 
   @Getter
-  @ManyToMany(fetch = FetchType.EAGER)
+  @ManyToMany(fetch = FetchType.LAZY)
   @JoinTable(
       name = "user_roles",
       joinColumns = @JoinColumn(name = "user_id"),

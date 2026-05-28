@@ -1,14 +1,16 @@
 package org.pe.nextcar.iam.interfaces.rest.resources;
 
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.util.List;
 
 public record SignUpResource(
-        String email,
-        String password,
-        String firstName,
-        String lastName,
-        String phone,
-        String documentNumber,   // DNI peruano (8 dígitos)
-        String captchaToken,     // token de reCAPTCHA v3
-        List<String> roles
+        @NotBlank @Email @Size(max = 254) String email,
+        @NotBlank @Size(max = 256) String password,
+        @NotBlank @Size(max = 60) String firstName,
+        @NotBlank @Size(max = 60) String lastName,
+        @Size(max = 20) String phone,
+        String documentNumber,
+        String captchaToken
 ) {}

@@ -7,9 +7,8 @@ import org.pe.nextcar.shared.domain.model.entities.AuditableModel;
 
 import java.util.List;
 
-/** Role type. */
 @Entity
-public class Role extends AuditableModel {
+  public class Role extends AuditableModel {
 
   @Id
   @Getter

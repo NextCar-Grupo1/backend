@@ -1,7 +1,7 @@
-package org.pe.nextcar.verification.domain.model.valueobjects;
+package org.pe.nextcar.iam.domain.model.valueobjects;
 
 import java.time.LocalDate;
-import org.pe.nextcar.verification.domain.model.valueobjects.DniVerificationStatus;
+
 public record DniResult(
         String dni,
         String nombres,
@@ -9,6 +9,5 @@ public record DniResult(
         String apellidoMaterno,
         LocalDate fechaNacimiento,
         boolean valid,
-        DniVerificationStatus status  // ← nuevo campo
+        DniVerificationStatus status
 ) {}
-

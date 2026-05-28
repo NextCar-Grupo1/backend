@@ -1,6 +1,7 @@
 package org.pe.nextcar.iam.interfaces.rest;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -30,24 +31,23 @@ public class AuthenticationController {
     this.userCommandService = userCommandService;
   }
 
-  /** Sign in. */
   @PostMapping("/sign-in")
   public ResponseEntity<AuthenticatedUserResource> signIn(
-      @RequestBody SignInResource signInResource) {
+      @Valid @RequestBody SignInResource signInResource) {
     var signInCommand = SignInCommandFromResourceAssembler.toCommandFromResource(signInResource);
     var authenticatedUser = userCommandService.handle(signInCommand);
     if (authenticatedUser.isEmpty()) {
       return ResponseEntity.notFound().build();
     }
+    var result = authenticatedUser.get();
     var authenticatedUserResource =
         AuthenticatedUserResourceFromEntityAssembler.toResourceFromEntity(
-            authenticatedUser.get().getLeft(), authenticatedUser.get().getRight());
+            result.user(), result.token());
     return ResponseEntity.ok(authenticatedUserResource);
   }
 
-  /** Sign up. */
   @PostMapping("/sign-up")
-  public ResponseEntity<UserResource> signUp(@RequestBody SignUpResource signUpResource) {
+  public ResponseEntity<UserResource> signUp(@Valid @RequestBody SignUpResource signUpResource) {
     var signUpCommand = SignUpCommandFromResourceAssembler.toCommandFromResource(signUpResource);
     var user = userCommandService.handle(signUpCommand);
     if (user.isEmpty()) {
