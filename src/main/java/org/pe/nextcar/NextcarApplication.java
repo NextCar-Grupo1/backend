@@ -11,7 +11,6 @@ import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
 public class NextcarApplication {
 
 	public static void main(String[] args) {
-		DotEnvConfig.load();
 		SpringApplication.run(NextcarApplication.class, args);
 	}
 

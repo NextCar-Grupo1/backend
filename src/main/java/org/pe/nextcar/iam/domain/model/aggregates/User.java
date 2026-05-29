@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Set;
 
 @Entity
+@Table(name = "users") // <--- ¡ESTA ES LA LÍNEA MÁGICA!
 public class User extends AuditableAbstractAggregateRoot<User> {
 
   @Getter
