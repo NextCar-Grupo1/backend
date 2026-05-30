@@ -11,17 +11,17 @@
 3. [Configuración del Entorno](#configuración-del-entorno)
 4. [Ejecución Local](#ejecución-local)
 5. [Arquitectura General](#arquitectura-general)
-6. [Módulo IAM — Identity & Access Management](#módulo-iam)
-   - [Modelo de Dominio](#modelo-de-dominio)
-   - [Roles disponibles](#roles-disponibles)
-   - [Endpoints de Autenticación](#endpoints-de-autenticación)
-   - [Endpoints de Usuarios](#endpoints-de-usuarios)
-   - [Endpoints de Roles](#endpoints-de-roles)
-   - [Flujo de Autenticación JWT](#flujo-de-autenticación-jwt)
-7. [Seguridad](#seguridad)
-8. [Convenciones del Proyecto](#convenciones-del-proyecto)
-9. [Variables de Entorno](#variables-de-entorno)
-10. [Swagger / OpenAPI](#swagger--openapi)
+6. [Flujo Completo del Sistema](#flujo-completo-del-sistema)
+7. [Módulo IAM](#módulo-iam)
+8. [Módulo Verification — DNI](#módulo-verification--dni)
+9. [Módulo Catalog — Vehículos](#módulo-catalog--vehículos)
+10. [Módulo Customers — Perfil del Cliente](#módulo-customers--perfil-del-cliente)
+11. [Módulo Financial — Simulador de Crédito](#módulo-financial--simulador-de-crédito)
+12. [Seguridad](#seguridad)
+13. [Convenciones del Proyecto](#convenciones-del-proyecto)
+14. [Variables de Entorno](#variables-de-entorno)
+15. [Swagger / OpenAPI](#swagger--openapi)
+16. [Estado del Proyecto y Mejoras](#estado-del-proyecto-y-mejoras)
 
 ---
 
@@ -38,6 +38,7 @@
 | BCrypt | (via Spring) | Hash de contraseñas |
 | Lombok | (incluido) | Reducción de boilerplate |
 | springdoc-openapi | 2.8.8 | Documentación Swagger |
+| java-dotenv | 5.2.2 | Carga de variables `.env` |
 | Maven | 3.9.x | Gestión de dependencias |
 
 ---
@@ -45,10 +46,8 @@
 ## Requisitos Previos
 
 - **JDK 26** instalado y `JAVA_HOME` configurado
-- **PostgreSQL 14+** corriendo localmente o en Docker
-- **Maven 3.9+** (o usar el wrapper incluido `./mvnw`)
-
-Para verificar tu instalación:
+- **PostgreSQL 14+** corriendo localmente
+- Archivo **`.env`** en la raíz del proyecto (ver `.env.example`)
 
 ```bash
 java -version
@@ -64,118 +63,210 @@ psql --version
 
 ```sql
 CREATE DATABASE nextcar_db;
-CREATE USER postgres WITH PASSWORD '1234';
-GRANT ALL PRIVILEGES ON DATABASE nextcar_db TO postgres;
 ```
 
-### 2. Configurar `application.properties`
+### 2. Crear el archivo `.env`
 
-El archivo se encuentra en `src/main/resources/application.properties`. Los valores por defecto son:
+Copia `.env.example` y rellena:
 
-```properties
-# Base de datos
-spring.datasource.url=jdbc:postgresql://localhost:5432/nextcar_db
-spring.datasource.username=postgres
-spring.datasource.password=1234
+```env
+SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/nextcar_db
+SPRING_DATASOURCE_USERNAME=postgres
+SPRING_DATASOURCE_PASSWORD=tu_password
 
-# JWT — cambiar en producción
-authorization.jwt.secret=WriteHereYourSecretStringForTokenSigningCredentials
-authorization.jwt.expiration.days=7
-
-# Puerto del servidor
-server.port=8091
+APIPERU_DNI_KEY=tu_token_de_apiperu_dev
+GOOGLE_CAPTCHA_KEY=tu_secret_key_de_recaptcha
 ```
 
-> Para sobreescribir sin tocar el archivo, usa variables de entorno (ver sección [Variables de Entorno](#variables-de-entorno)).
+> Obtén tu token en [apiperu.dev](https://apiperu.dev) y tu clave en [Google reCAPTCHA v3](https://www.google.com/recaptcha/admin).
 
-### 3. Esquema de base de datos
+**Para desarrollo sin APIs externas**, agrega al `.env`:
+```env
+apiperu.enabled=false
+recaptcha.secret-key=
+```
 
-El proyecto usa `spring.jpa.hibernate.ddl-auto=update`, así que Hibernate crea y actualiza las tablas automáticamente al iniciar. No se necesita ejecutar scripts SQL manualmente.
+### 3. Tablas generadas automáticamente
 
-Las tablas generadas siguen la convención **snake_case pluralizado** gracias a `SnakeCaseWithPluralizedTablePhysicalNamingStrategy`:
+Hibernate crea y actualiza todas las tablas al iniciar (`ddl-auto=update`):
 
 | Entidad Java | Tabla PostgreSQL |
 |---|---|
 | `User` | `users` |
 | `Role` | `roles` |
 | (join table) | `user_roles` |
+| `Vehicle` | `vehicles` |
+| `Customer` | `customers` |
+| `LoanSimulation` | `loan_simulations` |
+| `PaymentScheduleEntry` | `payment_schedule_entries` |
 
 ---
 
 ## Ejecución Local
 
 ```bash
-# Clonar el repositorio
 git clone <url-del-repo>
 cd nextcar
-
-# Compilar sin tests
 ./mvnw clean package -DskipTests
-
-# Ejecutar
 ./mvnw spring-boot:run
 ```
 
-La API queda disponible en `http://localhost:8091`.
+La API queda en `http://localhost:8091`.
 
-Al iniciar, el sistema ejecuta automáticamente el **seeding de roles** (ver `ApplicationReadyEventHandler`), creando en la base de datos los roles `ROLE_ADMIN` y `ROLE_USER` si no existen.
+Al iniciar, `ApplicationReadyEventHandler` ejecuta automáticamente:
+
+```
+1. Seed de roles      →  ROLE_ADMIN, ROLE_USER
+2. Seed de admin      →  admin@nextcar.pe / Admin123!
+3. Seed de catálogo   →  16 vehículos con imagen y precio real
+```
 
 ---
 
 ## Arquitectura General
 
-El proyecto sigue una arquitectura de **monolito modular** con principios DDD, organizando el código en bounded contexts independientes:
+El proyecto sigue una arquitectura de **monolito modular** con principios DDD, organizado en 4 bounded contexts + shared kernel:
 
 ```
 src/main/java/org/pe/nextcar/
 │
-├── iam/                          ← Bounded context: autenticación y usuarios
-│   ├── application/
-│   │   └── internal/
-│   │       ├── commandservices/  ← Lógica de escritura (SignUp, SignIn)
-│   │       ├── queryservices/    ← Lógica de lectura (GetUser, GetRoles)
-│   │       ├── eventhandlers/    ← Eventos de aplicación (seed roles)
-│   │       └── outboundservices/ ← Contratos hacia infraestructura
-│   ├── domain/
-│   │   └── model/
-│   │       ├── aggregates/       ← User (raíz de agregado)
-│   │       ├── commands/         ← SignUpCommand, SignInCommand
-│   │       ├── entities/         ← Role
-│   │       ├── queries/          ← GetUserByIdQuery, etc.
-│   │       ├── valueobjects/     ← Roles (enum)
-│   │       └── services/         ← Contratos de dominio
-│   ├── infrastructure/
-│   │   ├── authorization/sfs/    ← Filtros y pipeline de Spring Security
-│   │   ├── hashing/bcrypt/       ← Implementación BCrypt
-│   │   ├── persistence/jpa/      ← Repositorios JPA
-│   │   └── tokens/jwt/           ← Implementación JWT
-│   └── interfaces/
-│       ├── acl/                  ← IamContextFacade (Anti-Corruption Layer)
-│       └── rest/                 ← Controllers, Resources, Assemblers
-│
-├── shared/                       ← Shared Kernel
+├── iam/                              ← Autenticación, usuarios, roles, JWT
+│   ├── application/internal/
+│   │   ├── commandservices/          ← SignUp, SignIn, SeedAdmin
+│   │   ├── queryservices/            ← GetUser, GetRoles
+│   │   ├── eventhandlers/            ← ApplicationReadyEventHandler (orquesta seeding)
+│   │   └── outboundservices/         ← Contratos: HashingService, TokenService,
+│   │                                              CaptchaVerifierService, DniVerificationService
 │   ├── domain/model/
-│   │   ├── aggregates/           ← AuditableAbstractAggregateRoot
-│   │   └── entities/             ← AuditableModel
+│   │   ├── aggregates/               ← User
+│   │   ├── commands/                 ← SignUpCommand, SignInCommand, SeedAdminUserCommand
+│   │   ├── entities/                 ← Role
+│   │   ├── queries/                  ← GetUserByIdQuery, GetUserByEmailQuery
+│   │   └── valueobjects/             ← Roles, DniResult, DniVerificationStatus, AuthenticatedUser
 │   ├── infrastructure/
-│   │   ├── documentation/        ← OpenApiConfiguration
-│   │   └── persistence/jpa/      ← SnakeCaseNamingStrategy
-│   └── interfaces/rest/
-│       └── resources/            ← MessageResource
+│   │   ├── authorization/sfs/        ← BearerAuthorizationRequestFilter, WebSecurityConfiguration
+│   │   ├── captcha/google/           ← GoogleRecaptchaVerifierServiceImpl
+│   │   ├── dni/apiperu/              ← ApiPeruDniVerificationServiceImpl
+│   │   ├── hashing/bcrypt/           ← HashingServiceImpl (BCrypt)
+│   │   ├── persistence/jpa/          ← UserRepository, RoleRepository
+│   │   └── tokens/jwt/               ← TokenServiceImpl (JJWT)
+│   └── interfaces/
+│       ├── acl/                      ← IamContextFacade (ACL para otros contextos)
+│       └── rest/                     ← AuthenticationController, UsersController,
+│                                        RolesController, DniController
+│
+├── catalog/                          ← Catálogo de vehículos con imagen y cuota estimada
+│   ├── application/internal/
+│   │   └── queryservices/            ← VehicleQueryServiceImpl
+│   ├── domain/model/
+│   │   ├── aggregates/               ← Vehicle
+│   │   ├── queries/                  ← GetAllVehiclesQuery, GetVehicleByIdQuery
+│   │   └── valueobjects/             ← VehicleCategory, FuelType, Transmission
+│   ├── domain/services/              ← VehicleQueryService
+│   ├── infrastructure/
+│   │   └── persistence/jpa/
+│   │       ├── repositories/         ← VehicleRepository
+│   │       └── seeder/               ← VehicleSeeder (16 autos pre-cargados)
+│   └── interfaces/rest/              ← VehicleController, VehicleResource, VehicleAssembler
+│
+├── customers/                        ← Perfil financiero del cliente
+│   ├── application/internal/
+│   │   ├── commandservices/          ← CustomerCommandServiceImpl
+│   │   └── queryservices/            ← CustomerQueryServiceImpl
+│   ├── domain/model/
+│   │   ├── aggregates/               ← Customer
+│   │   ├── commands/                 ← CreateCustomerProfileCommand, UpdateCustomerProfileCommand
+│   │   ├── queries/                  ← GetCustomerByUserIdQuery, GetCustomerByIdQuery
+│   │   └── valueobjects/             ← EmploymentType
+│   ├── domain/services/              ← CustomerCommandService, CustomerQueryService
+│   ├── infrastructure/
+│   │   └── persistence/jpa/          ← CustomerRepository
+│   └── interfaces/rest/              ← CustomerController, CustomerResource, CustomerAssembler
+│
+├── financial/                        ← Simulador de crédito vehicular
+│   ├── application/internal/
+│   │   ├── commandservices/          ← LoanSimulationCommandServiceImpl
+│   │   └── queryservices/            ← LoanSimulationQueryServiceImpl
+│   ├── domain/model/
+│   │   ├── aggregates/               ← LoanSimulation
+│   │   ├── commands/                 ← CreateLoanSimulationCommand
+│   │   ├── entities/                 ← PaymentScheduleEntry
+│   │   ├── queries/                  ← GetLoanSimulationByIdQuery, GetLoanSimulationsByUserIdQuery
+│   │   └── valueobjects/             ← LoanCurrency, RateType, CapitalizationFrequency,
+│   │                                    GracePeriodType, PaymentMethod, FinancialEntity
+│   ├── domain/services/              ← LoanCalculationService, contratos
+│   ├── infrastructure/
+│   │   └── persistence/jpa/          ← LoanSimulationRepository
+│   └── interfaces/rest/              ← LoanSimulationController
+│
+├── shared/                           ← Shared Kernel
+│   ├── domain/model/
+│   │   ├── aggregates/               ← AuditableAbstractAggregateRoot
+│   │   └── entities/                 ← AuditableModel
+│   ├── infrastructure/
+│   │   ├── documentation/            ← OpenApiConfiguration
+│   │   ├── environment/dotenv/       ← DotEnvConfig
+│   │   └── persistence/jpa/          ← SnakeCaseWithPluralizedTablePhysicalNamingStrategy
+│   └── interfaces/rest/              ← GlobalExceptionHandler, MessageResource
 │
 └── NextcarApplication.java
 ```
 
-### Principio clave: separación por capas dentro de cada bounded context
+### Principio clave: separación por capas
 
 ```
 interfaces → application → domain ← infrastructure
 ```
 
-- **`domain`** no depende de nada externo.
-- **`application`** coordina dominio e infraestructura a través de contratos (interfaces).
-- **`infrastructure`** implementa los contratos definidos en `application`.
-- **`interfaces`** expone el contexto hacia afuera (REST, ACL hacia otros contextos).
+Los bounded contexts se comunican **únicamente** a través de fachadas ACL. Ejemplo: `financial` y `customers` acceden a datos de `iam` solo vía `IamContextFacade`, nunca importando repositorios directamente.
+
+---
+
+## Flujo Completo del Sistema
+
+Este es el flujo que sigue un cliente desde que entra a la plataforma hasta obtener su plan de pagos:
+
+```
+CLIENTE                                    BACKEND
+  │                                           │
+  │ 1. VER CATÁLOGO (sin cuenta)              │
+  │ GET /api/v1/vehicles                      │
+  │──────────────────────────────────────────►│  catalog: devuelve autos con imagen
+  │◄──────────────────────────────────────────│  + cuota estimada precalculada
+  │                                           │
+  │ 2. REGISTRO                               │
+  │ POST /api/v1/authentication/sign-up       │
+  │──────────────────────────────────────────►│  iam: valida CAPTCHA + DNI
+  │◄──────────────────────────────────────────│  crea User con ROLE_USER → 201
+  │                                           │
+  │ 3. INICIO DE SESIÓN                       │
+  │ POST /api/v1/authentication/sign-in       │
+  │──────────────────────────────────────────►│  iam: valida credenciales
+  │◄──────────────────────────────────────────│  retorna JWT (7 días) → 200
+  │                                           │
+  │ 4. COMPLETAR PERFIL FINANCIERO            │
+  │ POST /api/v1/customers                    │
+  │ Authorization: Bearer <token>             │
+  │──────────────────────────────────────────►│  customers: guarda dirección,
+  │◄──────────────────────────────────────────│  empleo, ingresos → 201
+  │                                           │
+  │ 5. ELEGIR AUTO DEL CATÁLOGO               │
+  │ GET /api/v1/vehicles/{id}                 │
+  │──────────────────────────────────────────►│  catalog: devuelve precio
+  │◄──────────────────────────────────────────│  e imageUrl del auto seleccionado
+  │                                           │
+  │ 6. SIMULAR CRÉDITO                        │
+  │ POST /api/v1/loan-simulations             │
+  │ { vehiclePrice, método, banco, tasa... }  │
+  │──────────────────────────────────────────►│  financial: calcula TEM, cuotas,
+  │                                           │  seguros, VAN, TIR, TCEA
+  │◄──────────────────────────────────────────│  retorna cronograma completo → 201
+  │                                           │
+  │ 7. VER HISTORIAL DE SIMULACIONES          │
+  │ GET /api/v1/loan-simulations/my           │
+  │──────────────────────────────────────────►│  financial: lista todas las
+  │◄──────────────────────────────────────────│  simulaciones del usuario
+```
 
 ---
 
@@ -183,76 +274,60 @@ interfaces → application → domain ← infrastructure
 
 ### Modelo de Dominio
 
-#### `User` (aggregate root)
-
-Campos principales:
+#### `User` — aggregate root
 
 | Campo | Tipo | Restricciones |
 |---|---|---|
 | `id` | `Long` | PK, auto-generado |
-| `email` | `String` | Único, max 254 chars |
+| `email` | `String` | Único, max 254 |
 | `password` | `String` | BCrypt hash, max 256 |
 | `firstName` | `String` | Requerido, max 60 |
 | `lastName` | `String` | Requerido, max 60 |
 | `phone` | `String` | Opcional, max 20 |
 | `isActive` | `boolean` | Default `true` |
 | `emailVerified` | `boolean` | Default `false` |
-| `roles` | `Set<Role>` | Muchos a muchos |
+| `roles` | `Set<Role>` | Many-to-many |
 | `createdAt` | `Date` | Auto-auditado |
 | `updatedAt` | `Date` | Auto-auditado |
 
-#### `Role` (entity)
+#### `Role` — entity
 
 | Campo | Tipo | Valores |
 |---|---|---|
 | `id` | `Long` | PK, auto-generado |
 | `name` | `Roles` (enum) | `ROLE_ADMIN`, `ROLE_USER` |
 
-### Roles Disponibles
+### Roles disponibles
 
 | Rol | Descripción |
 |---|---|
-| `ROLE_USER` | Rol por defecto asignado en registro. Acceso a funciones de cliente. |
-| `ROLE_ADMIN` | Acceso administrativo completo. |
-
-Si el campo `roles` viene vacío en el registro, se asigna `ROLE_USER` automáticamente.
+| `ROLE_USER` | Asignado por defecto en el registro |
+| `ROLE_ADMIN` | Seeded automáticamente: `admin@nextcar.pe` / `Admin123!` |
 
 ---
 
-### Endpoints de Autenticación
-
-Base path: `/api/v1/authentication`
-
-Estos endpoints son **públicos** (no requieren token).
-
----
-
-#### `POST /api/v1/authentication/sign-up`
-
-Registra un nuevo usuario en el sistema.
-
-**Request body:**
+### `POST /api/v1/authentication/sign-up` — público
 
 ```json
 {
-  "email": "juan.perez@example.com",
+  "email": "juan@gmail.com",
   "password": "MiPassword123",
   "firstName": "Juan",
   "lastName": "Pérez García",
   "phone": "999888777",
-  "roles": []
+  "documentNumber": "12345678",
+  "captchaToken": "03AGdBq25..."
 }
 ```
 
-> Dejar `roles` como array vacío para asignar `ROLE_USER` por defecto.  
-> Para crear un admin durante desarrollo: `"roles": ["ROLE_ADMIN"]`
+> `documentNumber` y `captchaToken` son opcionales. Si se omiten, no se validan.
 
 **Response `201 Created`:**
 
 ```json
 {
   "id": 1,
-  "email": "juan.perez@example.com",
+  "email": "juan@gmail.com",
   "firstName": "Juan",
   "lastName": "Pérez García",
   "phone": "999888777",
@@ -260,23 +335,18 @@ Registra un nuevo usuario en el sistema.
 }
 ```
 
-**Errores posibles:**
-
 | Código | Causa |
 |---|---|
-| `400 Bad Request` | Email ya registrado o datos inválidos |
+| `201` | Usuario creado |
+| `400` | Email duplicado, CAPTCHA inválido o DNI no encontrado |
 
 ---
 
-#### `POST /api/v1/authentication/sign-in`
-
-Autentica un usuario y retorna el token JWT.
-
-**Request body:**
+### `POST /api/v1/authentication/sign-in` — público
 
 ```json
 {
-  "email": "juan.perez@example.com",
+  "email": "juan@gmail.com",
   "password": "MiPassword123"
 }
 ```
@@ -286,37 +356,123 @@ Autentica un usuario y retorna el token JWT.
 ```json
 {
   "id": 1,
-  "email": "juan.perez@example.com",
+  "email": "juan@gmail.com",
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "roles": ["ROLE_USER"]
 }
 ```
 
-**Errores posibles:**
+> ⚠️ Guarda el `token`. Se usa en el header `Authorization: Bearer <token>`.
 
 | Código | Causa |
 |---|---|
-| `404 Not Found` | Usuario no encontrado |
-| `400 Bad Request` | Contraseña incorrecta |
+| `200` | Autenticado |
+| `400` | Contraseña incorrecta |
+| `404` | Usuario no encontrado |
 
 ---
 
-### Endpoints de Usuarios
+### Endpoints de Usuarios — requieren JWT
 
-Base path: `/api/v1/users`
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/api/v1/users` | Lista todos los usuarios |
+| `GET` | `/api/v1/users/{id}` | Obtiene usuario por ID |
+| `GET` | `/api/v1/roles` | Lista roles disponibles |
 
-Todos estos endpoints **requieren token JWT** en el header.
+---
 
-**Header requerido:**
+### Flujo de Autenticación JWT
+
 ```
-Authorization: Bearer <token>
+POST /sign-up
+  └─► Valida CAPTCHA → Verifica DNI → Verifica email único
+      → BCrypt hash → Guarda User → 201
+
+POST /sign-in
+  └─► Busca User → Compara BCrypt → Genera JWT (HS256, 7 días) → 200
+
+Requests protegidas:
+  └─► BearerAuthorizationRequestFilter
+        → Valida firma JWT → Extrae email → Carga UserDetails
+        → Setea SecurityContextHolder → Controller
+```
+
+**Estructura del JWT:**
+```
+Header  : { "alg": "HS256", "typ": "JWT" }
+Payload : { "sub": "juan@gmail.com", "iat": 1700000000, "exp": 1700604800 }
 ```
 
 ---
 
-#### `GET /api/v1/users`
+## Módulo Verification — DNI
 
-Retorna la lista de todos los usuarios registrados.
+### `GET /api/v1/dni/{dni}` — público
+
+Consulta RENIEC vía apiperu.dev.
+
+```
+GET /api/v1/dni/12345678
+```
+
+**Response `200 OK`:**
+
+```json
+{
+  "dni": "12345678",
+  "nombres": "JUAN CARLOS",
+  "apellidoPaterno": "PÉREZ",
+  "apellidoMaterno": "GARCÍA"
+}
+```
+
+| Código | Causa |
+|---|---|
+| `200` | DNI encontrado |
+| `404` | DNI no encontrado o servicio no disponible |
+
+---
+
+## Módulo Catalog — Vehículos
+
+El catálogo es **público** — los usuarios pueden ver los autos antes de registrarse. Al iniciar, el `VehicleSeeder` carga **16 vehículos** con imágenes reales (Wikimedia Commons), precios en soles y una cuota estimada precalculada para mostrar en la card del frontend.
+
+### Vehículos pre-cargados
+
+| Marca | Modelo | Año | Precio (S/) | Categoría |
+|---|---|---|---|---|
+| Toyota | Corolla | 2024 | 89,900 | SEDAN |
+| Toyota | Yaris | 2024 | 69,900 | SEDAN |
+| Toyota | RAV4 | 2024 | 145,900 | SUV |
+| Toyota | Hilux | 2024 | 159,900 | PICKUP |
+| Hyundai | Tucson | 2024 | 125,900 | SUV |
+| Hyundai | Elantra | 2024 | 82,900 | SEDAN |
+| Hyundai | Grand i10 | 2024 | 55,900 | HATCHBACK |
+| Kia | Sportage | 2024 | 118,900 | SUV |
+| Kia | Picanto | 2024 | 49,900 | HATCHBACK |
+| Chevrolet | Tracker | 2024 | 98,900 | SUV |
+| Renault | Duster | 2024 | 79,900 | SUV |
+| Renault | Logan | 2024 | 59,900 | SEDAN |
+| Nissan | Sentra | 2024 | 85,900 | SEDAN |
+| Mazda | CX-30 | 2024 | 109,900 | SUV |
+| Ford | Ranger | 2024 | 149,900 | PICKUP |
+| BMW | X3 | 2024 | 289,900 | LUXURY |
+| Mercedes-Benz | GLC | 2024 | 319,900 | LUXURY |
+
+> La cuota estimada `estimatedMonthlyPayment` se calcula automáticamente con TEA 12.5%, 20% cuota inicial, 36 meses. Es referencial para mostrar en la card — el usuario puede personalizar todos los parámetros al simular.
+
+---
+
+### `GET /api/v1/vehicles` — público
+
+Lista todos los vehículos disponibles. Filtro opcional por categoría.
+
+```
+GET /api/v1/vehicles
+GET /api/v1/vehicles?category=SUV
+GET /api/v1/vehicles?category=SEDAN
+```
 
 **Response `200 OK`:**
 
@@ -324,109 +480,438 @@ Retorna la lista de todos los usuarios registrados.
 [
   {
     "id": 1,
-    "email": "juan.perez@example.com",
-    "firstName": "Juan",
-    "lastName": "Pérez García",
-    "phone": "999888777",
-    "roles": ["ROLE_USER"]
+    "brand": "Toyota",
+    "model": "Corolla",
+    "year": 2024,
+    "price": 89900.0,
+    "currency": "SOLES",
+    "imageUrl": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b9/...",
+    "category": "SEDAN",
+    "categoryDisplayName": "Sedán",
+    "fuelType": "GASOLINE",
+    "fuelTypeDisplayName": "Gasolina",
+    "transmission": "CVT",
+    "transmissionDisplayName": "CVT",
+    "engineCC": 1800,
+    "seatingCapacity": 5,
+    "description": "El sedán más vendido del Perú...",
+    "estimatedMonthlyPayment": 2447.26
   }
 ]
 ```
 
+> **Cómo usar `estimatedMonthlyPayment` en el frontend:**
+> Muestra este valor en la card del auto como "Desde S/ 2,447/mes*" con un asterisco que aclare que es referencial. Al hacer clic en el auto, pre-llena el simulador con el `price` del vehículo.
+
 ---
 
-#### `GET /api/v1/users/{userId}`
+### `GET /api/v1/vehicles/{id}` — público
 
-Retorna un usuario por su ID.
+Obtiene el detalle completo de un vehículo. Usa el campo `price` y `currency` para pre-llenar el formulario de simulación.
 
-**Parámetro de ruta:** `userId` — Long
+```
+GET /api/v1/vehicles/1
+```
+
+### Valores del campo `category`
+
+| Valor | Descripción |
+|---|---|
+| `SEDAN` | Sedán |
+| `SUV` | SUV / Camioneta |
+| `HATCHBACK` | Hatchback |
+| `PICKUP` | Pickup |
+| `VAN` | Van / Minivan |
+| `LUXURY` | Lujo |
+
+### Todos los endpoints del módulo Catalog
+
+| Método | Ruta | Auth | Descripción |
+|---|---|---|---|
+| `GET` | `/api/v1/vehicles` | ❌ Público | Catálogo completo, filtrable por categoría |
+| `GET` | `/api/v1/vehicles?category={cat}` | ❌ Público | Filtrado por categoría |
+| `GET` | `/api/v1/vehicles/{id}` | ❌ Público | Detalle de un vehículo |
+
+---
+
+## Módulo Customers — Perfil del Cliente
+
+Complementa al `User` de IAM con los datos financieros necesarios para la evaluación crediticia: dirección, tipo de empleo e ingresos. Se crea una sola vez después del registro y puede actualizarse.
+
+### `Customer` — aggregate root
+
+| Campo | Tipo | Descripción |
+|---|---|---|
+| `id` | `Long` | PK, auto-generado |
+| `userId` | `Long` | Referencia al User de IAM (ACL) |
+| `documentNumber` | `String` | DNI (8 dígitos) |
+| `address` | `String` | Dirección completa |
+| `district` | `String` | Distrito |
+| `city` | `String` | Ciudad |
+| `employmentType` | `EmploymentType` | Tipo de empleo |
+| `occupation` | `String` | Cargo / Profesión |
+| `employer` | `String` | Nombre de la empresa |
+| `monthlyIncome` | `double` | Ingreso mensual en soles |
+| `profileComplete` | `boolean` | `true` cuando el perfil está completo |
+
+---
+
+### `GET /api/v1/customers/me` — requiere JWT
+
+Obtiene el perfil del usuario autenticado.
 
 **Response `200 OK`:**
 
 ```json
 {
   "id": 1,
-  "email": "juan.perez@example.com",
-  "firstName": "Juan",
-  "lastName": "Pérez García",
-  "phone": "999888777",
-  "roles": ["ROLE_USER"]
+  "userId": 1,
+  "documentNumber": "12345678",
+  "address": "Av. Javier Prado 1234",
+  "district": "San Isidro",
+  "city": "Lima",
+  "employmentType": "DEPENDENT",
+  "employmentTypeDisplayName": "Dependiente",
+  "occupation": "Ingeniero de Software",
+  "employer": "Tech Corp SAC",
+  "monthlyIncome": 5500.0,
+  "profileComplete": true
 }
 ```
 
-**Errores posibles:**
+| Código | Causa |
+|---|---|
+| `200` | Perfil encontrado |
+| `404` | El usuario no tiene perfil aún |
+
+---
+
+### `POST /api/v1/customers` — requiere JWT
+
+Crea el perfil financiero del cliente. Se ejecuta **una sola vez** después del registro.
+
+```json
+{
+  "documentNumber": "12345678",
+  "address": "Av. Javier Prado 1234",
+  "district": "San Isidro",
+  "city": "Lima",
+  "employmentType": "DEPENDENT",
+  "occupation": "Ingeniero de Software",
+  "employer": "Tech Corp SAC",
+  "monthlyIncome": 5500.00
+}
+```
+
+**Response `201 Created`:**
+
+```json
+{
+  "id": 1,
+  "userId": 1,
+  "documentNumber": "12345678",
+  "address": "Av. Javier Prado 1234",
+  "district": "San Isidro",
+  "city": "Lima",
+  "employmentType": "DEPENDENT",
+  "employmentTypeDisplayName": "Dependiente",
+  "occupation": "Ingeniero de Software",
+  "employer": "Tech Corp SAC",
+  "monthlyIncome": 5500.0,
+  "profileComplete": true
+}
+```
 
 | Código | Causa |
 |---|---|
-| `404 Not Found` | Usuario no encontrado |
-| `401 Unauthorized` | Token ausente o inválido |
+| `201` | Perfil creado |
+| `400` | Usuario ya tiene perfil o datos inválidos |
 
 ---
 
-### Endpoints de Roles
+### `PUT /api/v1/customers/{id}` — requiere JWT
 
-Base path: `/api/v1/roles`
+Actualiza el perfil existente.
 
-Requiere token JWT.
+```json
+{
+  "address": "Calle Los Pinos 567",
+  "district": "Miraflores",
+  "city": "Lima",
+  "employmentType": "INDEPENDENT",
+  "occupation": "Consultor",
+  "employer": "",
+  "monthlyIncome": 7200.00
+}
+```
+
+### Valores de `employmentType`
+
+| Valor | Descripción |
+|---|---|
+| `DEPENDENT` | Dependiente (relación de trabajo con empresa) |
+| `INDEPENDENT` | Independiente / Freelance |
+| `BUSINESS_OWNER` | Empresario / Dueño de negocio |
+| `RETIRED` | Jubilado |
+
+### Todos los endpoints del módulo Customers
+
+| Método | Ruta | Auth | Descripción |
+|---|---|---|---|
+| `GET` | `/api/v1/customers/me` | ✅ JWT | Perfil del usuario autenticado |
+| `POST` | `/api/v1/customers` | ✅ JWT | Crear perfil (una sola vez) |
+| `PUT` | `/api/v1/customers/{id}` | ✅ JWT | Actualizar perfil |
 
 ---
 
-#### `GET /api/v1/roles`
+## Módulo Financial — Simulador de Crédito
 
-Retorna todos los roles disponibles en el sistema.
+### Paso a paso: cómo simular un crédito
 
-**Response `200 OK`:**
+```
+1. GET  /api/v1/vehicles                         (sin token)
+        → Elige el auto y toma nota de su precio
+
+2. POST /api/v1/authentication/sign-in           (sin token)
+        → Obtén el token JWT
+
+3. GET  /api/v1/loan-simulations/financial-entities  (con token)
+        → Consulta los bancos y sus parámetros por defecto
+
+4. POST /api/v1/loan-simulations                 (con token)
+        → Envía vehiclePrice + parámetros del crédito
+
+5. GET  /api/v1/loan-simulations/my              (con token)
+        → Historial de todas tus simulaciones
+```
+
+---
+
+### Ejemplo 1: Método Francés (caso base)
+
+**Escenario:** Toyota Corolla S/ 89,900 | Cuota inicial 20% | 36 meses | TEA 12.5% | BCP
+
+```
+POST /api/v1/loan-simulations
+Authorization: Bearer <token>
+```
+
+```json
+{
+  "currency": "SOLES",
+  "vehiclePrice": 89900,
+  "initialFeeRate": 0.20,
+  "termMonths": 36,
+  "startDate": "2024-01-15",
+  "paymentMethod": "FRENCH",
+  "rateType": "TEA",
+  "rateValue": 0.125,
+  "capitalizationFrequency": "MONTHLY",
+  "gracePeriodType": "NONE",
+  "gracePeriodMonths": 0,
+  "financialEntity": "BCP",
+  "desgravamenRate": 0.00050,
+  "vehicleInsuranceMonthly": 150.00,
+  "portesMonthly": 10.00
+}
+```
+
+**Response `201 Created`:**
+
+```json
+{
+  "id": 1,
+  "currency": "SOLES",
+  "vehiclePrice": 89900.0,
+  "initialFee": 17980.0,
+  "principal": 71920.0,
+  "termMonths": 36,
+  "paymentMethod": "FRENCH",
+  "financialEntityName": "Banco de Crédito del Perú (BCP)",
+  "monthlyEffectiveRate": 0.009864,
+  "baseInstallment": 2383.66,
+  "totalMonthlyInstallment": 2583.66,
+  "monthlyIrr": 0.010412,
+  "tcea": 0.1323,
+  "npv": 0.0,
+  "totalInterestPaid": 13871.76,
+  "totalInsurancePaid": 7008.0,
+  "totalAmortization": 71920.0,
+  "totalPaid": 93071.76,
+  "schedule": [
+    {
+      "periodNumber": 1,
+      "paymentDate": "2024-02-15",
+      "initialBalance": 71920.0,
+      "amortization": 1674.74,
+      "interest": 708.92,
+      "desgravamenInsurance": 35.96,
+      "vehicleInsurance": 150.0,
+      "portes": 10.0,
+      "totalInstallment": 2579.62,
+      "finalBalance": 70245.26,
+      "gracePeriodType": "NONE",
+      "balloonPeriod": false
+    }
+  ]
+}
+```
+
+> - `baseInstallment` = cuota pura (capital + interés), sin seguros ni portes.
+> - `totalMonthlyInstallment` = cuota real mensual del cliente.
+> - `tcea` = Tasa de Costo Efectivo Anual exigida por SBS.
+> - `npv` ≈ 0 porque la tasa de descuento usada es la misma TEM del préstamo.
+
+---
+
+### Ejemplo 2: Compra Inteligente
+
+BCP retiene el 40% del precio como valor residual (cuota balón en el periodo 36).
+
+```json
+{
+  "currency": "SOLES",
+  "vehiclePrice": 89900,
+  "initialFeeRate": 0.20,
+  "termMonths": 36,
+  "startDate": "2024-01-15",
+  "paymentMethod": "SMART_PURCHASE",
+  "rateType": "TEA",
+  "rateValue": 0.125,
+  "capitalizationFrequency": "MONTHLY",
+  "gracePeriodType": "NONE",
+  "gracePeriodMonths": 0,
+  "financialEntity": "BCP",
+  "desgravamenRate": 0.00050,
+  "vehicleInsuranceMonthly": 150.00,
+  "portesMonthly": 10.00
+}
+```
+
+> Cuotas 1–35 son menores que en Método Francés. La cuota 36 incluye el balón (`balloonPeriod: true`).
+> Fórmula: `C = (P − VR·(1+i)^−n) · i / (1 − (1+i)^−n)` | VR = 89,900 × 0.40 = 35,960
+
+---
+
+### Ejemplo 3: Gracia Parcial
+
+El cliente paga solo intereses los primeros 3 meses.
+
+```json
+{
+  "currency": "SOLES",
+  "vehiclePrice": 89900,
+  "initialFeeRate": 0.20,
+  "termMonths": 36,
+  "startDate": "2024-01-15",
+  "paymentMethod": "FRENCH",
+  "rateType": "TEA",
+  "rateValue": 0.125,
+  "capitalizationFrequency": "MONTHLY",
+  "gracePeriodType": "PARTIAL",
+  "gracePeriodMonths": 3,
+  "financialEntity": "BCP",
+  "desgravamenRate": 0.00050,
+  "vehicleInsuranceMonthly": 150.00,
+  "portesMonthly": 10.00
+}
+```
+
+| Período | `amortization` | `gracePeriodType` |
+|---|---|---|
+| 1–3 | `0.0` | `"PARTIAL"` |
+| 4–36 | `> 0` | `"NONE"` |
+
+---
+
+### Ejemplo 4: Gracia Total
+
+El cliente no paga nada los primeros 2 meses. El interés capitaliza al saldo.
+
+```json
+{
+  "gracePeriodType": "TOTAL",
+  "gracePeriodMonths": 2
+}
+```
+
+| Período | `totalInstallment` | `gracePeriodType` |
+|---|---|---|
+| 1–2 | `0.0` | `"TOTAL"` |
+| 3–36 | `> 0` | `"NONE"` |
+
+---
+
+### Ejemplo 5: TNA en Dólares
+
+Vehículo $ 22,000 | BBVA | TNA 12% capitalización diaria | 48 meses
+
+```json
+{
+  "currency": "DOLLARS",
+  "vehiclePrice": 22000,
+  "initialFeeRate": 0.25,
+  "termMonths": 48,
+  "startDate": "2024-01-15",
+  "paymentMethod": "FRENCH",
+  "rateType": "TNA",
+  "rateValue": 0.12,
+  "capitalizationFrequency": "DAILY",
+  "gracePeriodType": "NONE",
+  "gracePeriodMonths": 0,
+  "financialEntity": "BBVA",
+  "desgravamenRate": 0.00045,
+  "vehicleInsuranceMonthly": 45.00,
+  "portesMonthly": 8.00
+}
+```
+
+> Conversión automática: `TEM = (1 + 0.12/360)^(360/12) − 1 ≈ 1.0052%`
+
+---
+
+### Entidades Financieras
+
+`GET /api/v1/loan-simulations/financial-entities` — requiere token.
 
 ```json
 [
-  { "id": 1, "name": "ROLE_ADMIN" },
-  { "id": 2, "name": "ROLE_USER" }
+  { "name": "BCP",         "displayName": "Banco de Crédito del Perú (BCP)", "smartPurchaseResidualRate": 0.40, "defaultDesgravamenRate": 0.0005,  "defaultVehicleInsurance": 150.0, "defaultPortes": 10.0, "maxGracePeriodMonths": 6 },
+  { "name": "BBVA",        "displayName": "BBVA Continental",                "smartPurchaseResidualRate": 0.35, "defaultDesgravamenRate": 0.00045, "defaultVehicleInsurance": 140.0, "defaultPortes": 8.0,  "maxGracePeriodMonths": 6 },
+  { "name": "SCOTIABANK",  "displayName": "Scotiabank Perú",                 "smartPurchaseResidualRate": 0.30, "defaultDesgravamenRate": 0.0005,  "defaultVehicleInsurance": 130.0, "defaultPortes": 12.0, "maxGracePeriodMonths": 4 },
+  { "name": "INTERBANK",   "displayName": "Interbank",                       "smartPurchaseResidualRate": 0.35, "defaultDesgravamenRate": 0.00048, "defaultVehicleInsurance": 145.0, "defaultPortes": 9.0,  "maxGracePeriodMonths": 6 },
+  { "name": "MIBANCO",     "displayName": "MiBanco",                         "smartPurchaseResidualRate": 0.25, "defaultDesgravamenRate": 0.00055, "defaultVehicleInsurance": 120.0, "defaultPortes": 8.0,  "maxGracePeriodMonths": 3 },
+  { "name": "BANBIF",      "displayName": "BanBIF",                          "smartPurchaseResidualRate": 0.30, "defaultDesgravamenRate": 0.0005,  "defaultVehicleInsurance": 135.0, "defaultPortes": 10.0, "maxGracePeriodMonths": 4 },
+  { "name": "PICHINCHA",   "displayName": "Banco Pichincha",                 "smartPurchaseResidualRate": 0.30, "defaultDesgravamenRate": 0.0005,  "defaultVehicleInsurance": 130.0, "defaultPortes": 8.0,  "maxGracePeriodMonths": 4 },
+  { "name": "CREDISCOTIA", "displayName": "CrediScotia Financiera",          "smartPurchaseResidualRate": 0.25, "defaultDesgravamenRate": 0.00055, "defaultVehicleInsurance": 125.0, "defaultPortes": 10.0, "maxGracePeriodMonths": 3 }
 ]
 ```
 
 ---
 
-### Flujo de Autenticación JWT
+### Referencia de campos
 
-```
-Cliente                          Backend
-  │                                 │
-  │  POST /sign-up (datos)          │
-  │────────────────────────────────►│
-  │                                 │  1. Valida datos
-  │                                 │  2. Hashea password con BCrypt
-  │                                 │  3. Guarda User en BD
-  │  201 Created (UserResource)     │
-  │◄────────────────────────────────│
-  │                                 │
-  │  POST /sign-in (email+password) │
-  │────────────────────────────────►│
-  │                                 │  1. Busca User por email
-  │                                 │  2. Valida password vs hash BCrypt
-  │                                 │  3. Genera JWT firmado (HS256, 7 días)
-  │  200 OK (token + datos)         │
-  │◄────────────────────────────────│
-  │                                 │
-  │  GET /api/v1/users              │
-  │  Authorization: Bearer <token>  │
-  │────────────────────────────────►│
-  │                                 │  1. BearerAuthorizationRequestFilter
-  │                                 │  2. Extrae y valida JWT
-  │                                 │  3. Carga UserDetails por email
-  │                                 │  4. Setea SecurityContext
-  │  200 OK                         │
-  │◄────────────────────────────────│
-```
+| Campo | Valores válidos | Restricción |
+|---|---|---|
+| `currency` | `SOLES`, `DOLLARS` | — |
+| `paymentMethod` | `FRENCH`, `SMART_PURCHASE` | — |
+| `rateType` | `TEA`, `TNA` | — |
+| `capitalizationFrequency` | `DAILY`, `MONTHLY`, `BIMONTHLY`, `QUARTERLY`, `SEMI_ANNUAL`, `ANNUAL` | Solo aplica con TNA |
+| `gracePeriodType` | `NONE`, `PARTIAL`, `TOTAL` | — |
+| `initialFeeRate` | Decimal | Entre `0.20` y `0.80` |
+| `termMonths` | Entero | Entre `6` y `84` |
+| `gracePeriodMonths` | Entero | ≥ `0`, < `termMonths`, ≤ `maxGracePeriodMonths` del banco |
+| `rateValue` | Decimal | Positivo (ej. `0.125` = 12.5%) |
+| `desgravamenRate` | Decimal | Positivo (ej. `0.00050` = 0.05% mensual) |
 
-**Estructura del JWT:**
+### Todos los endpoints del módulo Financial
 
-```
-Header: { "alg": "HS256", "typ": "JWT" }
-Payload: { "sub": "email@ejemplo.com", "iat": <timestamp>, "exp": <timestamp+7días> }
-Signature: HMACSHA256(base64(header) + "." + base64(payload), secret)
-```
-
-El token expira a los **7 días** (configurable con `authorization.jwt.expiration.days`).
+| Método | Ruta | Auth | Descripción |
+|---|---|---|---|
+| `POST` | `/api/v1/loan-simulations` | ✅ JWT | Calcular y guardar simulación |
+| `GET` | `/api/v1/loan-simulations/{id}` | ✅ JWT | Obtener por ID |
+| `GET` | `/api/v1/loan-simulations/my` | ✅ JWT | Historial del usuario |
+| `GET` | `/api/v1/loan-simulations/financial-entities` | ✅ JWT | Lista de bancos |
 
 ---
 
@@ -437,33 +922,36 @@ El token expira a los **7 días** (configurable con `authorization.jwt.expiratio
 ```
 POST /api/v1/authentication/sign-in
 POST /api/v1/authentication/sign-up
+GET  /api/v1/dni/{dni}
+GET  /api/v1/vehicles/**
 GET  /v3/api-docs/**
 GET  /swagger-ui/**
 GET  /swagger-ui.html
 ```
 
-### Rutas protegidas (requieren `Authorization: Bearer <token>`)
+### Rutas protegidas — requieren `Authorization: Bearer <token>`
 
-Todas las demás rutas bajo `/api/v1/**`.
+```
+/api/v1/users/**
+/api/v1/roles/**
+/api/v1/customers/**
+/api/v1/loan-simulations/**
+```
 
 ### Pipeline de seguridad
 
 ```
 Request
-  └─► BearerAuthorizationRequestFilter   ← extrae y valida el JWT
-        └─► SecurityContextHolder          ← setea el usuario autenticado
-              └─► Controller               ← procesa la request
+  └─► BearerAuthorizationRequestFilter  ← valida firma JWT
+        └─► SecurityContextHolder         ← setea usuario autenticado
+              └─► Controller              ← procesa la request
 ```
 
-Si el token es inválido o está ausente, `UnauthorizedRequestHandlerEntryPoint` responde con `401 Unauthorized`.
+Si el token es inválido: `UnauthorizedRequestHandlerEntryPoint` → `401 Unauthorized`.
 
 ### Hashing de contraseñas
 
-Las contraseñas nunca se almacenan en texto plano. Se utiliza **BCrypt** con su factor de costo por defecto (10 rounds). La verificación se hace con `BCryptPasswordEncoder.matches()`.
-
-### CORS
-
-Configurado para aceptar cualquier origen (`*`) en métodos `GET`, `POST`, `PUT`, `DELETE`. Ajustar a dominios específicos para producción en `WebSecurityConfiguration`.
+BCrypt 10 rounds. Las contraseñas nunca se almacenan en texto plano.
 
 ---
 
@@ -471,86 +959,105 @@ Configurado para aceptar cualquier origen (`*`) en métodos `GET`, `POST`, `PUT`
 
 ### Naming de base de datos
 
-La clase `SnakeCaseWithPluralizedTablePhysicalNamingStrategy` transforma automáticamente:
+`SnakeCaseWithPluralizedTablePhysicalNamingStrategy` transforma automáticamente:
+- `LoanSimulation` → `loan_simulations`
+- `initialFeeRate` → `initial_fee_rate`
+- `PaymentScheduleEntry` → `payment_schedule_entries`
 
-- Nombres de clase `CamelCase` → tablas `snake_case` pluralizadas (`User` → `users`)
-- Nombres de campo `camelCase` → columnas `snake_case` (`firstName` → `first_name`)
-
-### Patrón Command / Query (CQRS lite)
-
-Cada operación se modela como un objeto de comando o query:
+### Patrón CQRS lite
 
 ```
-SignUpCommand     → UserCommandService.handle(SignUpCommand)
-SignInCommand     → UserCommandService.handle(SignInCommand)
-GetUserByIdQuery  → UserQueryService.handle(GetUserByIdQuery)
+CreateLoanSimulationCommand  →  LoanSimulationCommandService.handle(...)
+GetLoanSimulationByIdQuery   →  LoanSimulationQueryService.handle(...)
+CreateCustomerProfileCommand →  CustomerCommandService.handle(...)
 ```
 
 ### Assemblers
 
-La transformación entre entidades de dominio y recursos REST se hace siempre a través de assemblers, nunca directamente en el controller:
-
 ```
-User (entity) ──► UserResourceFromEntityAssembler ──► UserResource (record)
+Vehicle  ──► VehicleAssembler  ──► VehicleResource
+Customer ──► CustomerAssembler ──► CustomerResource
 ```
 
-### Anti-Corruption Layer (ACL)
+### Anti-Corruption Layer
 
-Si otro bounded context (por ejemplo `financial`) necesita datos de un usuario, lo hace a través de `IamContextFacade`, nunca importando repositorios o entidades de `iam` directamente.
+```java
+// financial y customers acceden a iam así (correcto):
+Long userId = iamFacade.fetchUserIdByEmail(currentUser.getEmail()).orElseThrow(...);
+
+// Nunca así (incorrecto — rompe el aislamiento):
+userRepository.findByEmail(email);
+```
 
 ---
 
 ## Variables de Entorno
 
-Para sobreescribir la configuración sin modificar `application.properties`:
-
-| Variable | Descripción | Default |
-|---|---|---|
-| `DB_URL` | URL JDBC de PostgreSQL | `jdbc:postgresql://localhost:5432/nextcar_db` |
-| `DB_USERNAME` | Usuario de BD | `postgres` |
-| `DB_PASSWORD` | Contraseña de BD | `1234` |
-
-Ejemplo de ejecución con variables de entorno:
-
-```bash
-DB_URL=jdbc:postgresql://prod-server:5432/nextcar_db \
-DB_USERNAME=nextcar_user \
-DB_PASSWORD=SecurePassword \
-./mvnw spring-boot:run
-```
+| Variable | Descripción |
+|---|---|
+| `SPRING_DATASOURCE_URL` | URL JDBC de PostgreSQL |
+| `SPRING_DATASOURCE_USERNAME` | Usuario de base de datos |
+| `SPRING_DATASOURCE_PASSWORD` | Contraseña de base de datos |
+| `APIPERU_DNI_KEY` | Token de apiperu.dev para RENIEC |
+| `GOOGLE_CAPTCHA_KEY` | Secret key de Google reCAPTCHA v3 |
 
 ---
 
 ## Swagger / OpenAPI
 
-La documentación interactiva de la API está disponible una vez que el servidor está corriendo:
-
 ```
 http://localhost:8091/swagger-ui/index.html
 ```
 
-Para endpoints protegidos, hacer click en **Authorize** (ícono de candado) e ingresar:
-
+Click en **Authorize** e ingresa:
 ```
 Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
-El JSON de la especificación OpenAPI está en:
-
+JSON de la especificación:
 ```
 http://localhost:8091/v3/api-docs
 ```
 
 ---
 
-## Próximos Módulos
+## Estado del Proyecto y Mejoras
+
+### Estado actual
 
 | Módulo | Estado | Descripción |
 |---|---|---|
-| `iam` | ✅ Implementado | Autenticación, usuarios, roles, JWT |
-| `verification` | 🔄 Pendiente | Verificación de DNI (RENIEC) y mayoría de edad |
-| `financial` | 🔄 Pendiente | Plan de pagos método francés, Compra Inteligente, VAN, TIR |
-| `customers` | 🔄 Pendiente | Perfil del cliente, vehículo, historial de préstamos |
+| `iam` | ✅ Completo | Auth, usuarios, roles, JWT, BCrypt, CAPTCHA, seeding |
+| `verification` | ✅ Completo | Consulta DNI vía RENIEC (apiperu.dev) |
+| `catalog` | ✅ Completo | 16 vehículos pre-cargados con imagen, precio y cuota estimada |
+| `customers` | ✅ Completo | Perfil financiero: dirección, empleo, ingresos |
+| `financial` | ✅ Completo | Método Francés, Compra Inteligente, gracia parcial/total, VAN, TIR, TCEA |
+
+### Mejoras propuestas
+
+Las siguientes funcionalidades elevarían el sistema a un nivel de producción real y darían ventaja en la presentación:
+
+#### Funcionales (alto impacto)
+
+| Mejora | Descripción |
+|---|---|
+| **Exportar PDF del cronograma** | `GET /api/v1/loan-simulations/{id}/pdf` — genera el plan de pagos en PDF usando iText o JasperReports |
+| **Comparador de bancos** | `POST /api/v1/loan-simulations/compare` — recibe un vehículo y parámetros base, devuelve la simulación para todos los bancos en paralelo |
+| **Búsqueda y filtros en catálogo** | `GET /api/v1/vehicles?brand=Toyota&minPrice=50000&maxPrice=100000&fuelType=HYBRID` |
+| **Paginación del catálogo** | `GET /api/v1/vehicles?page=0&size=6` — necesario para catálogos grandes |
+| **Favoritos del usuario** | `POST /api/v1/vehicles/{id}/favorite` — guardar autos para comparar después |
+
+#### Técnicas (buenas prácticas)
+
+| Mejora | Descripción |
+|---|---|
+| **Pruebas unitarias** | `JUnit 5` + `Mockito` para `LoanCalculationService` — verifica fórmulas con datos conocidos |
+| **Rate limiting** | Limitar requests por IP en sign-up y sign-in para evitar ataques de fuerza bruta |
+| **Soft delete** | Agregar `deletedAt` en lugar de borrar físicamente simulaciones y clientes |
+| **Refresh token** | Emitir un refresh token junto con el JWT para renovar sesiones sin pedir credenciales |
+| **Manejo global de 404** | Agregar `@ExceptionHandler(NoSuchElementException.class)` en `GlobalExceptionHandler` |
+| **Docker Compose** | `docker-compose.yml` con PostgreSQL + backend para facilitar el despliegue del equipo |
+| **Imágenes propias** | Subir las imágenes de los autos a Cloudinary o S3 para no depender de Wikimedia |
 
 ---
 
