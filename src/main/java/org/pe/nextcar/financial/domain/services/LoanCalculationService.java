@@ -217,9 +217,10 @@ public class LoanCalculationService {
             }
 
             // ── Costs ─────────────────────────────────────────────────────────
-            double desgravamen = round(initialBalance * in.desgravamenRate());
-            double vehicleIns  = round(in.vehicleInsuranceMonthly());
-            double portes      = round(in.portesMonthly());
+            boolean isTotalGracePeriod = (k <= g) && in.gracePeriodType() == GracePeriodType.TOTAL;
+            double desgravamen = isTotalGracePeriod ? 0 : round(initialBalance * in.desgravamenRate());
+            double vehicleIns  = isTotalGracePeriod ? 0 : round(in.vehicleInsuranceMonthly());
+            double portes      = isTotalGracePeriod ? 0 : round(in.portesMonthly());
 
             // ── Total installment ─────────────────────────────────────────────
             if (entryGrace == GracePeriodType.TOTAL) {
@@ -228,7 +229,7 @@ public class LoanCalculationService {
                 totalInstallment = round(interest + desgravamen + vehicleIns + portes);
             } else if (isBalloon) {
                 // Last period: regular installment + balloon (VR) + insurance
-                totalInstallment = round(baseInstallment + residualValue + desgravamen + vehicleIns + portes);
+                totalInstallment = round(baseInstallment + initialBalance + desgravamen + vehicleIns + portes);
             } else {
                 totalInstallment = round(baseInstallment + desgravamen + vehicleIns + portes);
             }
