@@ -47,9 +47,7 @@ public class UserCommandServiceImpl implements UserCommandService {
 
   @Override
   public Optional<User> handle(SignUpCommand command) {
-    if (command.captchaToken() != null && !command.captchaToken().isBlank()) {
-      captchaVerifier.verify(command.captchaToken());
-    }
+    captchaVerifier.verify(command.captchaToken());
 
     if (userRepository.existsByEmail(command.email())) {
       throw new IllegalArgumentException("El correo electrónico ya está registrado");
