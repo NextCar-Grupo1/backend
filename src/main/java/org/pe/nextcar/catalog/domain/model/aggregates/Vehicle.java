@@ -86,4 +86,24 @@ public class Vehicle extends AuditableAbstractAggregateRoot<Vehicle> {
 
     public void markUnavailable() { this.available = false; }
     public void markAvailable()   { this.available = true; }
+
+    public void updateDetails(String brand, String model, int year, double price,
+                              org.pe.nextcar.financial.domain.model.valueobjects.LoanCurrency currency,
+                              String imageUrl, VehicleCategory category, FuelType fuelType,
+                              Transmission transmission, int engineCC, int seatingCapacity,
+                              String description) {
+        this.brand = brand;
+        this.model = model;
+        this.year = year;
+        this.price = price;
+        this.currency = currency;
+        this.imageUrl = imageUrl;
+        this.category = category;
+        this.fuelType = fuelType;
+        this.transmission = transmission;
+        this.engineCC = engineCC;
+        this.seatingCapacity = seatingCapacity;
+        this.description = description;
+        this.estimatedMonthlyPayment = calculateEstimatedPayment(price);
+    }
 }

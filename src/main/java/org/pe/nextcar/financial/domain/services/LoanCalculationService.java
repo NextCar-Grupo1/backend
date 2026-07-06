@@ -50,25 +50,25 @@ public class LoanCalculationService {
     // ── Input / Output ─────────────────────────────────────────────────────────
 
     public record CalculationInput(
-            double          vehiclePrice,
-            double          principal,
-            int             termMonths,
-            LocalDate       startDate,
-            PaymentMethod   paymentMethod,
-            RateType        rateType,
-            double          rateValue,
-            CapitalizationFrequency capitalizationFrequency,
-            GracePeriodType gracePeriodType,
-            int             gracePeriodMonths,
-            FinancialEntity financialEntity,
-            double          desgravamenRate,
+            double          vehiclePrice,//Precio del Vehiculo
+            double          principal,//Capital
+            int             termMonths,//tiempo en meses
+            LocalDate       startDate,//dia de inicio
+            PaymentMethod   paymentMethod,//metodo de pago
+            RateType        rateType,//Tipo de Tasa
+            double          rateValue,//Valor o porcentage de la tasa
+            CapitalizationFrequency capitalizationFrequency,//Capitalización
+            GracePeriodType gracePeriodType,//Periodo de Gracia
+            int             gracePeriodMonths,//Meses de Periodo de Gracia
+            FinancialEntity financialEntity,//Entidad Bancaria
+            double          desgravamenRate,//Radio de Desgravamen o Perio de Desgravamen
             double          vehicleInsuranceMonthly,
-            double          portesMonthly
+            double          portesMonthly//Portes Mensuales
     ) {}
 
     public record CalculationResult(
-            double                     monthlyEffectiveRate,
-            double                     baseInstallment,
+            double                     monthlyEffectiveRate,//Radio de meses efectivo
+            double                     baseInstallment,//
             double                     totalMonthlyInstallment,
             double                     npv,
             double                     monthlyIrr,
@@ -85,13 +85,13 @@ public class LoanCalculationService {
     public CalculationResult calculate(CalculationInput in) {
 
         // Step 1: convert rate to TEM
-        double i = toMonthlyEffectiveRate(in.rateValue(), in.rateType(),
-                in.capitalizationFrequency());
+        double i = toMonthlyEffectiveRate(in.rateValue(), in.rateType(), in.capitalizationFrequency());
         int n = in.termMonths();
         int g = in.gracePeriodMonths();
         int payingPeriods = n - g;
 
         // Step 2: compute post-grace balance (TOTAL grace inflates balance)
+        //Gracia Total, donde la gracia no se paga y el interes se suma al saldo
         double postGraceBalance = in.principal();
         if (in.gracePeriodType() == GracePeriodType.TOTAL && g > 0) {
             postGraceBalance = round(in.principal() * Math.pow(1.0 + i, g));
@@ -138,7 +138,7 @@ public class LoanCalculationService {
     }
 
     // ── Rate conversions ───────────────────────────────────────────────────────
-
+    //Conversion de Tasas TEA - > TEM
     public double toMonthlyEffectiveRate(double rateValue, RateType rateType,
                                          CapitalizationFrequency freq) {
         if (rateType == RateType.TEA) {
@@ -155,7 +155,7 @@ public class LoanCalculationService {
      * French: C = P·i·(1+i)^n / ((1+i)^n − 1)
      */
     public double calculateFrenchInstallment(double principal, double i, int n) {
-        if (i == 0) return principal / n;
+        if (i == 0) return principal / n; // los meses de gracia no se cuentan como pagos, por lo que se calcula sobre los emses restantes
         double factor = Math.pow(1.0 + i, n);
         return principal * i * factor / (factor - 1.0);
     }
@@ -173,7 +173,7 @@ public class LoanCalculationService {
     }
 
     // ── Schedule builder ───────────────────────────────────────────────────────
-
+    //Creacion del horario o las tablas de pagos del usuario por metodo Frances
     private List<PaymentScheduleEntry> buildSchedule(CalculationInput in, double i,
                                                      int g, int n,
                                                      double baseInstallment,
@@ -183,9 +183,9 @@ public class LoanCalculationService {
         LocalDate date    = in.startDate().plusMonths(1);
 
         for (int k = 1; k <= n; k++) {
-            double          initialBalance = balance;
-            double          interest       = round(initialBalance * i);
-            double          amortization;
+            double          initialBalance = balance; // Salo al inicio del Periodo
+            double          interest       = round(initialBalance * i); // Interes del periodo
+            double          amortization; // Amortizacion, lo que se baja del saldo calculado
             double          totalInstallment;
             GracePeriodType entryGrace;
             boolean         isBalloon      = false;
@@ -213,13 +213,14 @@ public class LoanCalculationService {
                 } else {
                     amortization = round(baseInstallment - interest);
                 }
-                balance = round(initialBalance - amortization);
+                balance = round(initialBalance - amortization); // Saldo Final que se usa para el siguiente periodo
             }
 
             // ── Costs ─────────────────────────────────────────────────────────
-            double desgravamen = round(initialBalance * in.desgravamenRate());
-            double vehicleIns  = round(in.vehicleInsuranceMonthly());
-            double portes      = round(in.portesMonthly());
+            boolean isTotalGracePeriod = (k <= g) && in.gracePeriodType() == GracePeriodType.TOTAL;
+            double desgravamen = isTotalGracePeriod ? 0 : round(initialBalance * in.desgravamenRate()); // Seguro sobre el saldo inicial
+            double vehicleIns  = isTotalGracePeriod ? 0 : round(in.vehicleInsuranceMonthly());
+            double portes      = isTotalGracePeriod ? 0 : round(in.portesMonthly());
 
             // ── Total installment ─────────────────────────────────────────────
             if (entryGrace == GracePeriodType.TOTAL) {
@@ -228,7 +229,7 @@ public class LoanCalculationService {
                 totalInstallment = round(interest + desgravamen + vehicleIns + portes);
             } else if (isBalloon) {
                 // Last period: regular installment + balloon (VR) + insurance
-                totalInstallment = round(baseInstallment + residualValue + desgravamen + vehicleIns + portes);
+                totalInstallment = round(baseInstallment + initialBalance + desgravamen + vehicleIns + portes);
             } else {
                 totalInstallment = round(baseInstallment + desgravamen + vehicleIns + portes);
             }
